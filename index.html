@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Matriculados em PPGs UFV Viçosa</title>
+    <script src="https://d3js.org/d3.v6.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+        }
+        .chart {
+            margin: 20px;
+        }
+        .axis-label {
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Matriculados em PPGs UFV Viçosa</h1>
+    <div>
+        <label for="curso">Curso:</label>
+        <select id="curso"></select>
+    </div>
+    <div>
+        <label for="nivel">Nível:</label>
+        <input type="checkbox" id="mestrado" name="nivel" value="Mestrado" checked>
+        <label for="mestrado">Mestrado</label>
+        <input type="checkbox" id="doutorado" name="nivel" value="Doutorado" checked>
+        <label for="doutorado">Doutorado</label>
+    </div>
+    <div class="chart">
+        <svg width="960" height="500"></svg>
+    </div>
+
+    <script>
+        const svg = d3.select("svg"),
+              margin = {top: 20, right: 20, bottom: 30, left: 50},
+              width = +svg.attr("width") - margin.left - margin.right,
+              height = +svg.attr("height") - margin.top - margin.bottom,
+              g = svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
+
+        const x = d3.scaleBand().rangeRound([0, width]).padding(0.1),
+              y = d3.scaleLinear().rangeRound([height, 0]),
+              z = d3.scaleOrdinal().range(["#98abc5", "#8a89a6"]);
+
+        const tooltip = d3.select("body").append("div").attr("class", "tooltip").style("opacity", 0);
+
+        d3.csv("ppg_data.csv").then(data => {
+            let cursos = [...new Set(data.map(d => d.curso))];
+            cursos.unshift("Todos");
+            let cursoSelect = d3.select("#curso");
+            cursoSelect.selectAll("option")
+                .data(cursos)
+                .enter()
+                .append("option")
+                .text(d => d)
+                .attr("value", d => d);
+
+            function updatePlot() {
+                let selectedCurso = cursoSelect.node().value;
+                let selectedNiveis = [];
+                if (document.getElementById("mestrado").checked) selectedNiveis.push("Mestrado");
+                if (document.getElementById("doutorado").checked) selectedNiveis.push("Doutorado");
+
+                let filteredData = data.filter(d => {
+                    return (selectedCurso === "Todos" || d.curso === selectedCurso) &&
+                           selectedNiveis.includes(d.nivel);
+                });
+
+                let groupedData = d3.group(filteredData, d => d.semestre);
+                let plotData = Array.from(groupedData, ([key, value]) => {
+                    let mestrado = value.filter(d => d.nivel === "Mestrado").reduce((sum, d) => sum + +d.matriculados, 0);
+                    let doutorado = value.filter(d => d.nivel === "Doutorado").reduce((sum, d) => sum + +d.matriculados, 0);
+                    return { semestre: key, Mestrado: mestrado, Doutorado: doutorado };
+                });
+
+                x.domain(plotData.map(d => d.semestre));
+                y.domain([0, d3.max(plotData, d => d.Mestrado + d.Doutorado)]);
+                z.domain(["Mestrado", "Doutorado"]);
+
+                g.selectAll(".bar").remove();
+                g.selectAll(".axis").remove();
+
+                g.append("g")
+                  .selectAll("g")
+                  .data(d3.stack().keys(["Mestrado", "Doutorado"])(plotData))
+                  .enter().append("g")
+                    .attr("fill", d => z(d.key))
+                  .selectAll("rect")
+                  .data(d => d)
+                  .enter().append("rect")
+                    .attr("class", "bar")
+                    .attr("x", d => x(d.data.semestre))
+                    .attr("y", d => y(d[1]))
+                    .attr("height", d => y(d[0]) - y(d[1]))
+                    .attr("width", x.bandwidth())
+                    .on("mouseover", function(event, d) {
+                        tooltip.transition()
+                               .duration(200)
+                               .style("opacity", .9);
+                        tooltip.html(`Mestrado: ${d.data.Mestrado}<br>Doutorado: ${d.data.Doutorado}`)
+                               .style("left", (event.pageX) + "px")
+                               .style("top", (event.pageY - 28) + "px");
+                    })
+                    .on("mouseout", function(d) {
+                        tooltip.transition()
+                               .duration(500)
+                               .style("opacity", 0);
+                    });
+
+                g.append("g")
+                  .attr("class", "axis")
+                  .attr("transform", `translate(0,${height})`)
+                  .call(d3.axisBottom(x))
+                  .append("text")
+                  .attr("x", width / 2)
+                  .attr("y", margin.bottom - 5)
+                  .attr("fill", "#000")
+                  .style("text-anchor", "middle")
+                  .text("Semestre");
+
+                g.append("g")
+                  .attr("class", "axis")
+                  .call(d3.axisLeft(y).ticks(10))
+                  .append("text")
+                  .attr("x", -margin.left)
+                  .attr("y", y(y.ticks(10).pop()) - 10)
+                  .attr("dy", ".71em")
+                  .attr("fill", "#000")
+                  .style("text-anchor", "start")
+                  .text("Total Enrollments");
+
+                let legend = g.append("g")
+                              .attr("font-family", "sans-serif")
+                              .attr("font-size", 10)
+                              .attr("text-anchor", "end")
+                              .selectAll("g")
+                              .data(["Mestrado", "Doutorado"].slice().reverse())
+                              .enter().append("g")
+                              .attr("transform", (d, i) => `translate(0,${i * 20})`);
+
+                legend.append("rect")
+                      .attr("x", width - 19)
+                      .attr("width", 19)
+                      .attr("height", 19)
+                      .attr("fill", z);
+
+                legend.append("text")
+                      .attr("x", width - 24)
+                      .attr("y", 9.5)
+                      .attr("dy", "0.32em")
+                      .text(d => d);
+            }
+
+            // Initial plot
+            updatePlot();
+
+            // Update plot on changes
+            cursoSelect.on("change", updatePlot);
+            d3.selectAll("input[name='nivel']").on("change", updatePlot);
+        });
+    </script>
+</body>
+</html>
+
